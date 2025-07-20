@@ -1,0 +1,6 @@
+tempfile
+flask
+os
+pydub
+ichigo.asr
+speak_main
