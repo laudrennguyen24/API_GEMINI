@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>IELTS Speaking Trainer</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding-bottom: 4rem;
+      background: #f9f9f9;
+    }
+    .container {
+      max-width: 600px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+    h1 { text-align: center; }
+    section {
+      background: #fff;
+      padding: 1rem;
+      margin-bottom: 1.5rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    p {
+      background: #eef;
+      padding: 0.5rem;
+      border-radius: 4px;
+      min-height: 1.5em;
+    }
+    select, input {
+      width: 100%;
+      padding: 0.5rem;
+      margin-bottom: 0.5rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 1rem;
+    }
+    button {
+      background: #007BFF;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:disabled {
+      background: #aaa;
+      cursor: not-allowed;
+    }
+    /* Input-bar fixed bottom */
+    .input-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #fff;
+      border-top: 1px solid #ddd;
+      display: flex;
+      align-items: center;
+      padding: 0.5rem;
+      box-shadow: 0 -2px 5px rgba(0,0,0,0.1);
+    }
+    .input-bar input {
+      flex: 1;
+      border: 1px solid #ccc;
+      border-radius: 999px;
+      padding: 0.75rem 1rem;
+      margin-right: 0.5rem;
+      font-size: 1rem;
+    }
+    .input-bar button {
+      background: none;
+      border: none;
+      padding: 0.5rem;
+      cursor: pointer;
+    }
+    .input-bar button.recording svg {
+      fill: #dc3545;
+    }
+    .input-bar svg {
+      width: 24px;
+      height: 24px;
+      fill: #555;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>IELTS Speaking Trainer</h1>
+
+    <!-- CHỌN CHỦ ĐỀ -->
+    <section id="topic-section">
+      <h2>1. Chọn chủ đề</h2>
+      <select id="topic-select"></select>
+      <button id="start-btn">Bắt đầu</button>
+    </section>
+
+    <!-- HIỂN THỊ CÂU HỎI EXAMINER -->
+    <section id="question-section" hidden>
+      <h2>Examiner hỏi:</h2>
+      <p id="question"></p>
+    </section>
+
+    <!-- HIỂN THỊ TRANSCRIPT -->
+    <section id="transcript-section" hidden>
+      <h2>Your answer (transcript):</h2>
+      <p id="transcript"></p>
+    </section>
+  </div>
+
+  <!-- INPUT BAR GIỐNG CHATGPT -->
+  <div class="input-bar">
+    <input id="user-input" type="text" placeholder="Gõ trả lời hoặc click mic để ghi âm…" autocomplete="off" />
+    <button id="mic-btn" title="Ghi âm">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/>
+        <path d="M19 11v2h-2v-2h2zM7 11v2H5v-2h2zM12 17v4h-2v-4h2z"/>
+      </svg>
+    </button>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const topicSelect   = document.getElementById("topic-select");
+      const startBtn      = document.getElementById("start-btn");
+      const questionSec   = document.getElementById("question-section");
+      const questionP     = document.getElementById("question");
+      const transcriptSec = document.getElementById("transcript-section");
+      const transcriptP   = document.getElementById("transcript");
+      const userInput     = document.getElementById("user-input");
+      const micBtn        = document.getElementById("mic-btn");
+
+      let mediaRecorder, audioChunks, audioBlob;
+
+      // 1) Load topics
+      fetch("/topics/").then(r => r.json()).then(data => {
+        data.topics.forEach(t => topicSelect.add(new Option(t, t)));
+      });
+
+      // 2) Start session
+      startBtn.addEventListener("click", async () => {
+        const topic = topicSelect.value;
+        const res = await fetch("/start/", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ topic })
+        });
+        const { question } = await res.json();
+        questionP.innerText = question;
+        questionSec.hidden   = false;
+        transcriptSec.hidden = true;
+        transcriptP.innerText= "";
+        userInput.value      = "";
+        userInput.focus();
+      });
+
+      // 3) Text answer on Enter
+      userInput.addEventListener("keydown", async e => {
+        if (e.key === "Enter" && userInput.value.trim()) {
+          const text = userInput.value.trim();
+          userInput.value = "";
+          await sendAnswer(text);
+        }
+      });
+
+      // 4) Mic toggle record
+      micBtn.addEventListener("click", async () => {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          alert("Trình duyệt không hỗ trợ ghi âm.");
+          return;
+        }
+        if (micBtn.classList.contains("recording")) {
+          mediaRecorder.stop();
+        } else {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+            mediaRecorder.onstop = async () => {
+              audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+              // 4.1 Upload & transcribe
+              const form = new FormData();
+              form.append("file", audioBlob, "rec.webm");
+              const r1 = await fetch("/upload-audio/", { method:"POST", body: form });
+              const { transcript } = await r1.json();
+              transcriptP.innerText = transcript;
+              transcriptSec.hidden = false;
+              // 4.2 Send to /answer/
+              await sendAnswer(transcript);
+            };
+            mediaRecorder.start();
+          } catch(err) {
+            console.error(err);
+            alert("Không thể truy cập micro. Hãy cho phép quyền ghi âm.");
+          }
+        }
+        micBtn.classList.toggle("recording");
+      });
+
+      // Common sendAnswer
+      async function sendAnswer(text) {
+        const topic = topicSelect.value;
+        const r2 = await fetch("/answer/", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ topic, text })
+        });
+        const { question } = await r2.json();
+        questionP.innerText = question;
+        userInput.focus();
+        // stop ghi âm nếu đang quay
+        if (micBtn.classList.contains("recording")) {
+          mediaRecorder.stop();
+          micBtn.classList.remove("recording");
+        }
+      }
+    });
+  </script>
+</body>
+</html>
